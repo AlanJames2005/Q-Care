@@ -4,7 +4,7 @@ Combines all services: core data, AI engine, patient vitals, alerts, analytics
 Run: uvicorn main:app --reload --port 8000
 """
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, APIRouter
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
@@ -23,6 +23,8 @@ except Exception:
 
 app = FastAPI(title="CareOptimize API", version="2.0.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+api_router = APIRouter(prefix="/api")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ENUMS & MODELS
@@ -333,32 +335,32 @@ async def start_simulator():
 # REST ROUTES
 # ══════════════════════════════════════════════════════════════════════════════
 
-@app.get("/")
+@api_router.get("/")
 def root(): return {"status":"ok","patients":len(STORE["patients"]),"caregivers":len(STORE["caregivers"])}
 
 # ── Caregivers ────────────────────────────────────────────────────────────────
-@app.get("/caregivers")
+@api_router.get("/caregivers")
 def get_caregivers(): return list(STORE["caregivers"].values())
 
-@app.put("/caregivers/{cid}/status")
+@api_router.put("/caregivers/{cid}/status")
 def set_status(cid:str, status:Status):
     if cid not in STORE["caregivers"]: raise HTTPException(404)
     STORE["caregivers"][cid].status = status; return {"ok":True}
 
 # ── Patients ──────────────────────────────────────────────────────────────────
-@app.get("/patients")
+@api_router.get("/patients")
 def get_patients(): return list(STORE["patients"].values())
 
-@app.get("/patients/caregiver/{cid}")
+@api_router.get("/patients/caregiver/{cid}")
 def patients_by_cg(cid:str):
     return [p for p in STORE["patients"].values() if p.caregiver_id==cid]
 
-@app.get("/patients/top-risk")
+@api_router.get("/patients/top-risk")
 def top_risk(n:int=10):
     pts = sorted(STORE["patients"].values(), key=lambda p:p.risk, reverse=True)
     return pts[:n]
 
-@app.post("/rebalance")
+@api_router.post("/rebalance")
 def rebalance():
     cg_ids = list(STORE["caregivers"].keys())
     pts = sorted(STORE["patients"].values(), key=lambda p:p.risk, reverse=True)
@@ -371,22 +373,22 @@ def rebalance():
     return {"ok":True,"loads":load}
 
 # ── Alarms ────────────────────────────────────────────────────────────────────
-@app.get("/alarms")
+@api_router.get("/alarms")
 def get_alarms(limit:int=40):
     return list(reversed(STORE["alarms"]))[:limit]
 
-@app.get("/alarms/active")
+@api_router.get("/alarms/active")
 def active_alarms():
     return [a for a in STORE["alarms"] if not a.acked]
 
-@app.post("/alarms/{aid}/ack")
+@api_router.post("/alarms/{aid}/ack")
 def ack_alarm(aid:str, cg_id:str=""):
     real_cg_id = CAREGIVER_EMAIL_MAP.get(cg_id, cg_id)
     for a in STORE["alarms"]:
         if a.id==aid: a.acked=True; a.ack_by=real_cg_id; STORE["alarm_stats"]["acked"]+=1; return {"ok":True}
     raise HTTPException(404)
 
-@app.post("/alarms/{aid}/caretaker-ack")
+@api_router.post("/alarms/{aid}/caretaker-ack")
 async def caretaker_ack_alarm(aid:str, cg_id:str=""):
     """Caretaker acknowledges receiving the alert"""
     real_cg_id = CAREGIVER_EMAIL_MAP.get(cg_id, cg_id)
@@ -413,7 +415,7 @@ async def caretaker_ack_alarm(aid:str, cg_id:str=""):
     raise HTTPException(404)
 
 # ── AI Assignment ─────────────────────────────────────────────────────────────
-@app.post("/assign")
+@api_router.post("/assign")
 def assign(req: AssignRequest):
     p = STORE["patients"].get(req.patient_id)
     if not p: raise HTTPException(404, "Patient not found")
@@ -429,7 +431,7 @@ def assign(req: AssignRequest):
 class ConfirmAssignRequest(BaseModel):
     result: dict
 
-@app.post("/confirm_assignment")
+@api_router.post("/confirm_assignment")
 async def confirm_assignment(req: ConfirmAssignRequest):
     r = req.result
     # Create the AlarmEvent
@@ -462,12 +464,12 @@ async def confirm_assignment(req: ConfirmAssignRequest):
     await broadcast_alarms([alm])
     return {"ok": True}
 
-@app.get("/assignments")
+@api_router.get("/assignments")
 def get_assignments(limit:int=20):
     return list(reversed(STORE["assignments"]))[:limit]
 
 # ── Stats ─────────────────────────────────────────────────────────────────────
-@app.get("/stats")
+@api_router.get("/stats")
 def stats():
     pts = list(STORE["patients"].values()); cgs = list(STORE["caregivers"].values())
     return {"total_patients":len(pts),"total_caregivers":len(cgs),
@@ -480,13 +482,13 @@ def stats():
             "avg_workload":round(sum(c.workload for c in cgs)/len(cgs),1)}
 
 # ── Analytics ─────────────────────────────────────────────────────────────────
-@app.get("/analytics/workload")
+@api_router.get("/analytics/workload")
 def analytics_workload():
     cgs = list(STORE["caregivers"].values())
     return [{"name":c.name,"workload":c.workload,"fairness":c.fairness,
              "alarms":c.alarms,"patients":len(c.patients),"role":c.role} for c in cgs]
 
-@app.get("/analytics/risk-distribution")
+@api_router.get("/analytics/risk-distribution")
 def risk_dist():
     pts = list(STORE["patients"].values())
     return {"critical":sum(1 for p in pts if p.risk>=70),
@@ -494,7 +496,7 @@ def risk_dist():
             "medium":sum(1 for p in pts if 40<=p.risk<55),
             "low":sum(1 for p in pts if p.risk<40)}
 
-@app.get("/analytics/report")
+@api_router.get("/analytics/report")
 def shift_report():
     cgs = list(STORE["caregivers"].values())
     pts = list(STORE["patients"].values())
@@ -526,7 +528,7 @@ def shift_report():
     return {"report":report,"ai":False}
 
 # ── WebSocket ─────────────────────────────────────────────────────────────────
-@app.websocket("/ws")
+@api_router.websocket("/ws")
 async def ws_endpoint(ws: WebSocket):
     # Extract caretaker info from query params
     caretaker_id = ws.query_params.get("caretaker_id")
@@ -551,3 +553,5 @@ async def ws_endpoint(ws: WebSocket):
         if ws in WS_CLIENTS:
             del WS_CLIENTS[ws]
         print(f"   WS disconnected, now {len(WS_CLIENTS)} clients")
+
+app.include_router(api_router)

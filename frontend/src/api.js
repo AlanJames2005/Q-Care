@@ -1,9 +1,9 @@
 // src/api.js — All API calls in one place
-const BASE = process.env.REACT_APP_API_URL || "http://localhost:8000";
+const BASE = process.env.REACT_APP_API_URL || "";
 
 async function req(path, opts = {}) {
   try {
-    const r = await fetch(`${BASE}${path}`, {
+    const r = await fetch(`${BASE}/api${path}`, {
       headers: { "Content-Type": "application/json" },
       ...opts,
     });
@@ -57,7 +57,10 @@ export const api = {
 
 // WebSocket helper
 export function createWS(onMessage, caretakerId = null, caretakerEmail = null) {
-  let wsUrl = "ws://localhost:8000/ws";
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  const host = process.env.REACT_APP_WS_URL || window.location.host;
+  let wsUrl = `${protocol}//${host}/api/ws`; 
+
   if (caretakerId && caretakerEmail) {
     wsUrl += `?caretaker_id=${caretakerId}&caretaker_email=${caretakerEmail}`;
   }
